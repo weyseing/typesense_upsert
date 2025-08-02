@@ -1,0 +1,16 @@
+services:
+  django_app:
+    container_name: django_app
+    build: .
+    volumes:
+      - .:/app
+    ports:
+      - 5555:8000 
+    env_file:
+      - .env
+    networks:
+      global-net:
+
+networks:
+  global-net:
+    external: true
