@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
 
+    'rest_framework',
     'typesense',
 ]
 
@@ -132,10 +133,18 @@ HttpRequest.get_host = HttpRequest._get_raw_host
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'formatters': {
+        'simple': {
+            'format': '%(asctime)s - %(levelname)-8s - %(name)s - %(message)s',
+            'style': '%', 
+            'datefmt': '%Y-%m-%d %H:%M:%S',
+        },
+    },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
             'level': 'INFO',
+            'formatter': 'simple',
         },
     },
     'root': {
