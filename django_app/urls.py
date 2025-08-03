@@ -19,5 +19,5 @@ from django.urls import path, include
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('typesense/', include("typesense.urls")),
+    path('typesense/', include("typesense_app.urls")),
 ]
