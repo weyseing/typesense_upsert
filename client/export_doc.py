@@ -20,19 +20,24 @@ client = typesense.Client({
 def typesense_connect():
     try:
         collections = client.collections.retrieve()
-        logging.info(f"✅ Connected to Typesense! Found {len(collections)} collections.")
+        logging.info(f"Connected to Typesense! Found {len(collections)} collections.")
     except Exception as e:
-        logging.error(f"❌ Connection to Typesense failed: {e}")
+        logging.error(f"Connection to Typesense failed: {e}")
         exit(1)
 
-def export_typesense_documents(filter_string=None):
+def split_by_pipe(arg_string):
+    return arg_string.split('|')
+
+def export_typesense_documents(include_fields=None, filter_by=None):
     logging.info(f"Starting export from collection...")
     start_time_export = time.time()
     
-    # Parameter
+    # parameter
     export_parameters = {}
-    if filter_string:
-        export_parameters['filter_by'] = filter_string
+    if include_fields:
+        export_parameters['include_fields'] = ",".join(include_fields)
+    if filter_by:
+        export_parameters['filter_by'] = filter_by
 
     try:
         # Export doc
@@ -49,7 +54,6 @@ def export_typesense_documents(filter_string=None):
         if documents:
             return pd.DataFrame(documents)
         else:
-            logging.info("No documents found matching the export criteria.")
             return pd.DataFrame() 
             
     except Exception as e:
@@ -59,22 +63,17 @@ def export_typesense_documents(filter_string=None):
 if __name__ == "__main__":
     # Parse arg
     parser = argparse.ArgumentParser()
-    parser.add_argument('--filter-by', type=str, default=None, help='Filter query string (e.g., "transaction_id:[60000..60999] && currency:JPY").')
+    parser.add_argument('--include', type=split_by_pipe, default=None, help='Selected fields (e.g., "id|amount|status").')
+    parser.add_argument('--filter', type=str, default=None, help='Filter query string (e.g., "transaction_id:[60000..60999] && currency:JPY").')
     args = parser.parse_args()
 
     # Connect
     typesense_connect()
 
     # Export documents
-    df_exported = export_typesense_documents(args.filter_by)
+    df_exported = export_typesense_documents(include_fields=args.include, filter_by=args.filter)
 
     # Display
     if df_exported is not None:
-        if not df_exported.empty:
-            logging.info(f"\n📖 Total documents exported: {len(df_exported)}")
-            logging.info(f"📖 Displaying last 10 exported documents:")
-            logging.info(df_exported.tail(10))
-        else:
-            logging.info("No documents were exported based on the provided criteria.")
-    else:
-        logging.error("Failed to export documents from Typesense.")
+        logging.info(f"\nTotal documents exported: {len(df_exported)}")
+        logging.info(f"Displaying last 10 exported documents:\n{df_exported.tail(10)}")
