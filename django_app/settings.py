@@ -152,3 +152,5 @@ LOGGING = {
         'level': 'INFO',
     },
 }
+
+DATA_UPLOAD_MAX_MEMORY_SIZE = 52428800 
