@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 # apt-get update
-RUN apt-get update && apt-get -y install curl tzdata 
+RUN apt-get update && apt-get -y install curl tzdata jq
 RUN python3 -m pip install --upgrade setuptools
 
 # Copy all app files
