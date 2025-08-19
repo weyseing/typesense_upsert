@@ -11,9 +11,9 @@ class TypesenseClient:
     def __init__(self, collection_name):
         load_dotenv()
         self.collection_name = collection_name
-        api_key = os.getenv("TYPESENSE_API_KEY", "123456")
-        host = os.getenv("TYPESENSE_ENDPOINT", "typesense")
-        port = os.getenv("TYPESENSE_PORT", "8108")
+        api_key = os.getenv("TYPESENSE_API_KEY")
+        host = os.getenv("TYPESENSE_ENDPOINT")
+        port = os.getenv("TYPESENSE_PORT")
         protocol = "http"
 
         if not api_key:
@@ -204,7 +204,7 @@ def main():
     subparsers = parser.add_subparsers(dest="action", required=True, help="The action to perform.")
     search_parser = subparsers.add_parser("search", help="Perform a search query.")
     search_parser.add_argument("--query", default="*", help="The search query string. (Default: '*')")
-    search_parser.add_argument("--query_by", required=True, help="Comma-separated fields to search in.")
+    search_parser.add_argument("--query_by", default="*", help="Comma-separated fields to search in according to rank. (Default: '*')")
     search_parser.add_argument("--filter_by", help="Filter condition (e.g., 'amount:>100').")
     search_parser.add_argument("--sort_by", help="Sorting parameters (e.g., 'amount:desc').")
     search_parser.add_argument("--group_by", help="Field to group results by.")
