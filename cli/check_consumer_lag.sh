@@ -33,12 +33,13 @@ curl --location 'https://api.telemetry.confluent.cloud/v2/metrics/cloud/query' \
             }
         ]
     },
-    \"granularity\": \"PT1H\",
+    \"granularity\": \"PT1M\",
     \"group_by\": [
         \"metric.consumer_group_id\"
     ],
     \"intervals\": [
-        \"2025-08-19T00:00:00Z/now\"
+        \"PT1H/now\"
     ],
+    \"_comment_.intervals\": \"2025-08-19T00:00:00Z/now\",
     \"limit\": 25
 }"
