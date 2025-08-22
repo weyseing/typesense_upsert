@@ -13,8 +13,8 @@ URL = "https://api.telemetry.confluent.cloud/v2/metrics/cloud/query"
 KAFKA_CLUSTER = os.environ['KAFKA_CLUSTER']
 
 # timeframe, topic, consumer
-TIME_FRAME = "PT10M/now"     # "2025-08-20T16:00:00Z/2025-08-21T08:00:00Z"    OR     "PT3H/now"
-GRANULARITY = "PT1M"
+TIME_FRAME = "2025-08-21T16:00:00Z/now"     # "2025-08-20T16:00:00Z/2025-08-21T08:00:00Z"    OR     "PT3H/now"
+GRANULARITY = "PT1H"
 TOPIC = "typesense_txn_stream_parsed_txn"
 CONSUMER_GROUP_ID = os.environ.get('CONSUMER_GROUP_ID', '')
 
