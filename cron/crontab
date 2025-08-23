@@ -1,0 +1,8 @@
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+0 1 * * * if [ "$ENVIRONMENT" = "PRODUCTION" ]; then python3 /app/client/manage_collection_transaction.py; fi
+
+
+
+

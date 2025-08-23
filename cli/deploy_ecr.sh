@@ -8,9 +8,9 @@ if [ -f .env ]; then
 fi
 
 # login aws ecr
-echo "Logging in to AWS ECR at $AWS_ECR in region $AWS_REGION..."
+echo "Logging in to AWS ECR at $AWS_ECR in region $AWS_DEFAULT_REGION..."
 aws --version
-aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$AWS_ECR"
+aws ecr get-login-password --region "$AWS_DEFAULT_REGION" | docker login --username AWS --password-stdin "$AWS_ECR"
 
 # build image
 echo "Building Docker image with cache..."
