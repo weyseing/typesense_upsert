@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 client = typesense.Client({
     'api_key': os.getenv('TYPESENSE_API_KEY'),
     'nodes': [{'host':  os.getenv('TYPESENSE_ENDPOINT'), 'port':  os.getenv('TYPESENSE_PORT'), 'protocol': 'http'}],
-    'connection_timeout_seconds': 2
+    'connection_timeout_seconds': 600
 })
 
 # connect
