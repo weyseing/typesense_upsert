@@ -1,7 +1,8 @@
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
 
-0 1 * * * if [ "$ENVIRONMENT" = "PRODUCTION" ]; then python /app/client/manage_collection_transaction.py; fi
+0 1 * * * if [ "$ENVIRONMENT" = "PRODUCTION" ]; then python /app/cron/manage_collection_transaction.py; fi
+0 1 * * * if [ "$ENVIRONMENT" = "PRODUCTION" ]; then python /app/cron/manage_collection_status_count_mins.py; fi
 
 
 

@@ -136,3 +136,73 @@ def transaction(request):
         logger.error(f"ERROR: {error_message}", exc_info=True)
         return handle_response(process_id, total_start_time=total_start_time, processed_count=processed_count, errors=errors, error_message=error_message, status_code=500)
 
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([TypesenseKeyAuth])
+def status_count_mins(request):
+    process_id = uuid.uuid4()
+    total_start_time = time.time()
+    processed_count = 0
+    errors = []
+
+    # sharding dict
+    doc_upsert_month = defaultdict(list)
+
+    try:
+        payloads_list = json.loads(request.body)
+        
+        # pre-process doc
+        start_time = time.time()
+        for payload in payloads_list:
+            document_to_insert = payload.copy()
+
+            # month key
+            create_date_timestamp = document_to_insert.get('WINDOW_START')
+            dt_obj = datetime.fromtimestamp(create_date_timestamp / 1000)
+            year_month = dt_obj.strftime('%Y%m')
+            
+            # doc ID
+            document_id = f"{payload['MERCHANTID']}__{payload['CHANNEL']}__{payload['L_VERSION']}__{payload['CURRENCY']}__{payload['WINDOW_START']}"
+            document_to_insert['id'] = document_id
+            
+            # decode base64 & convert float
+            fields_to_convert = ['BILL_AMT']
+            for field in fields_to_convert:
+                if field in document_to_insert and isinstance(document_to_insert[field], str):
+                    document_to_insert[field] = float(avro_decimal_from_base64(document_to_insert[field], 2))
+            
+            # append to sharding dict
+            doc_upsert_month[year_month].append(document_to_insert)
+        log_process_time(start_time, f"[PID:{process_id}] Completed pre-processing {len(payloads_list)} docs")
+
+        # sharding config
+        sharding_configs = {
+            "YYYYMM": {"data": doc_upsert_month, "prefix": "status_count_mins_month__"}
+        }
+
+        # import upsert
+        for config_name, config in sharding_configs.items():
+            shard_start_time = time.time()
+            documents_to_upsert_dict = config["data"]
+            collection_prefix = config["prefix"]
+            
+            for sharding_key, documents_to_upsert in documents_to_upsert_dict.items():
+                collection_name = collection_prefix + sharding_key
+                start_time = time.time()
+                response = client.collections[collection_name].documents.import_(documents_to_upsert, {'action': 'upsert'})
+                for doc_response in response:
+                    if doc_response['success']:
+                        processed_count += 1
+                    else:
+                        errors.append(f"Failed to upsert document: {doc_response.get('error')}")
+                log_process_time(start_time, f"[PID:{process_id}] Completed upsert SINGLE-collection ({collection_name})")
+            log_process_time(shard_start_time, f"[PID:{process_id}] Completed upsert SHARD-collection ({config_name})")
+
+        # response
+        return handle_response(process_id, total_start_time=total_start_time, processed_count=processed_count, errors=errors, error_message=None, status_code=200)
+
+    except Exception as e:
+        error_message = str(e)
+        logger.error(f"ERROR: {error_message}", exc_info=True)
+        return handle_response(process_id, total_start_time=total_start_time, processed_count=processed_count, errors=errors, error_message=error_message, status_code=500)
+
