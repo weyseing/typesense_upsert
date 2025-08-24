@@ -94,14 +94,17 @@ def main():
     next_month = today + relativedelta(months=1)
     next_month_str = next_month.strftime('%Y%m')
 
+    # collection prefix
+    collection_prefix = 'transaction_month__'
+
     # delete old collection
-    old_collection_name = f'transaction_{two_months_ago_str}'
+    old_collection_name = collection_prefix + two_months_ago_str
     delete_old_collection(process_id, client, old_collection_name)
 
     # check & create collection
     months_to_check = [last_month_str, current_month_str, next_month_str]
     for month_str in months_to_check:
-        collection_name = f'transaction_{month_str}'
+        collection_name = collection_prefix + month_str
         check_and_create_collection(process_id, client, collection_name)
     
 if __name__ == "__main__":

@@ -76,9 +76,7 @@ def transaction(request):
     errors = []
 
     # sharding dict
-    # doc_upsert_month = defaultdict(list)
-    doc_upsert_month_mid = defaultdict(list)
-    # doc_upsert_month_channel = defaultdict(list)
+    doc_upsert_month = defaultdict(list)
 
     try:
         payloads_list = json.loads(request.body)
@@ -92,15 +90,6 @@ def transaction(request):
             create_date_timestamp = document_to_insert.get('CREATE_DATE')
             dt_obj = datetime.fromtimestamp(create_date_timestamp / 1000)
             year_month = dt_obj.strftime('%Y%m')
-
-            # mid & channel
-            merchant_id = str(document_to_insert.get('MERCHANTID'))
-            channel_id = str(document_to_insert.get('CHANNEL'))
-
-            # sharding key
-            sharding_key_month = year_month
-            sharding_key_month_mid = f"{year_month}__{merchant_id}"
-            sharding_key_month_channel = f"{year_month}__{channel_id}"
             
             # doc ID
             document_id = str(payload['TRANID'])
@@ -113,18 +102,12 @@ def transaction(request):
                     document_to_insert[field] = float(avro_decimal_from_base64(document_to_insert[field], 2))
             
             # append to sharding dict
-            # doc_upsert_month[sharding_key_month].append(document_to_insert)
-            doc_upsert_month_mid[sharding_key_month_mid].append(document_to_insert)
-            # doc_upsert_month_channel[sharding_key_month_channel].append(document_to_insert)
-
-        # log time
+            doc_upsert_month[year_month].append(document_to_insert)
         log_process_time(start_time, f"[PID:{process_id}] Completed pre-processing {len(payloads_list)} docs")
 
         # sharding config
         sharding_configs = {
-            # "YYYYMM": {"data": doc_upsert_month, "prefix": "txn_month_"},
-            "YYYYMM_MERCHANTID": {"data": doc_upsert_month_mid, "prefix": "txn_month_mid_"},
-            # "YYYYMM_CHANNEL": {"data": doc_upsert_month_channel, "prefix": "txn_month_chl_"}
+            "YYYYMM": {"data": doc_upsert_month, "prefix": "transaction_month__"}
         }
 
         # import upsert
@@ -135,11 +118,6 @@ def transaction(request):
             
             for sharding_key, documents_to_upsert in documents_to_upsert_dict.items():
                 collection_name = collection_prefix + sharding_key
-
-                # check & create collection
-                check_and_create_collection(process_id, client, collection_name)
-
-                # import upsert
                 start_time = time.time()
                 response = client.collections[collection_name].documents.import_(documents_to_upsert, {'action': 'upsert'})
                 for doc_response in response:
@@ -147,10 +125,8 @@ def transaction(request):
                         processed_count += 1
                     else:
                         errors.append(f"Failed to upsert document: {doc_response.get('error')}")
-                log_process_time(start_time, f"[PID:{process_id}] Completed upsert single-collection ({collection_name})")
-
-            # log time
-            log_process_time(shard_start_time, f"[PID:{process_id}] Completed upsert shard-collection ({config_name})")
+                log_process_time(start_time, f"[PID:{process_id}] Completed upsert SINGLE-collection ({collection_name})")
+            log_process_time(shard_start_time, f"[PID:{process_id}] Completed upsert SHARD-collection ({config_name})")
 
         # response
         return handle_response(process_id, total_start_time=total_start_time, processed_count=processed_count, errors=errors, error_message=None, status_code=200)
