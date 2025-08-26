@@ -1,20 +1,22 @@
 import typesense
-import json
+import ujson as json  # Faster JSON parsing
 import time
 import argparse
 import os
 import pandas as pd
-from dotenv import load_dotenv
 import io
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 class TypesenseClient:
-    def __init__(self, collection_name):
-        load_dotenv()
+    def __init__(self, collection_name, logger: logging.Logger | None = None):
         self.collection_name = collection_name
         api_key = os.getenv("TYPESENSE_API_KEY")
         host = os.getenv("TYPESENSE_ENDPOINT")
         port = os.getenv("TYPESENSE_PORT")
         protocol = "http"
+        self.logger = logger or logging.getLogger()
 
         if not api_key:
             raise ValueError("TYPESENSE_API_KEY not found in environment variables or .env file.")
@@ -23,18 +25,19 @@ class TypesenseClient:
             self.client = typesense.Client({
                 "api_key": api_key,
                 "nodes": [{"host": host, "port": str(port), "protocol": protocol}],
-                "connection_timeout_seconds": 5
+                "connection_timeout_seconds": 300
             })
             self.collection = self.client.collections[self.collection_name]
         except Exception as e:
-            print(f"[ERROR] Error initializing Typesense client: {e}")
+            self.logger.error(f"typesense init_error collection={self.collection_name} error={e}")
             self.client = None
             self.collection = None
 
     def _log_execution_time(self, operation, start_time):
         """Log execution time for an operation."""
         execution_time = time.time() - start_time
-        print(f"[INFO] Operation '{operation}' completed in {execution_time:.3f} seconds.")
+        self._last_duration = execution_time
+        self.logger.info("Execution Time=%.3fs", execution_time)
 
     def _cached_search(self, params_json):
         if not self.collection:
@@ -45,7 +48,7 @@ class TypesenseClient:
     def search(
         self,
         query,
-        query_by,
+        query_by="*",
         include_fields=None,
         filter_by=None,
         sort_by=None,
@@ -118,6 +121,10 @@ class TypesenseClient:
             result_df = pd.DataFrame(facet_data)
         
         self._log_execution_time('search', start_time)
+        self.logger.info(
+            "action=search | collection=%s | query=\"%s\" | query_by=\"%s\" | filter_by=\"%s\" | sort_by=\"%s\" | group_by=\"%s\" | facet_by=\"%s\" | page=%s | per_page=%s | rows=%s",
+            self.collection_name, query, query_by, filter_by or '', sort_by or '', group_by or '', facet_by or '', page or 'all', per_page, len(result_df)
+        )
         return result_df
 
     def get_by_id(self, document_id):
@@ -128,12 +135,10 @@ class TypesenseClient:
             result_dict = self.collection.documents[str(document_id)].retrieve()
             df = pd.DataFrame([result_dict])
             self._log_execution_time('get_by_id', start_time)
+            self.logger.info(f"action=get_by_id | collection={self.collection_name} | id={document_id} | rows=1")
             return df
-        except typesense.exceptions.ObjectNotFound:
-            self._log_execution_time('get_by_id', start_time)
-            return pd.DataFrame()
         except Exception as e:
-            print(f"[ERROR] Get by ID failed: {e}")
+            self.logger.error(f"action=get_by_id | collection={self.collection_name} | id={document_id} | error={e}")
             self._log_execution_time('get_by_id', start_time)
             return pd.DataFrame()
 
@@ -152,20 +157,19 @@ class TypesenseClient:
         
         try:
             export_response = self.collection.documents.export(export_params)
-            
-            if not export_response.strip():
-                self._log_execution_time('export', start_time)
-                return pd.DataFrame()
-
-            df = pd.read_json(io.StringIO(export_response), lines=True)
+            documents = [json.loads(line) for line in export_response.splitlines() if line.strip()]
+            df = pd.DataFrame(documents)
+            self._log_execution_time('export', start_time)
+            self.logger.info(
+                "action=export | collection=%s | filter_by=\"%s\" | include=\"%s\" | exclude=\"%s\" | format=%s | rows=%s",
+                self.collection_name, filter_by or '', include_fields or '', exclude_fields or '', (export_format or 'raw'), len(df)
+            )
 
             if export_format:
                 if not output_file:
                     timestamp = int(time.time())
                     output_file = f"typesense_export_{self.collection_name}_{timestamp}.{export_format}"
-                
-                print(f"[INFO] Saving {len(df)} records to '{output_file}'...")
-                
+
                 if export_format.lower() == "jsonl":
                     with open(output_file, 'w') as f:
                         f.write(export_response)
@@ -178,55 +182,64 @@ class TypesenseClient:
                 elif export_format.lower() == "parquet":
                     df.to_parquet(output_file, index=False)
                 else:
-                    print(f"[ERROR] Unsupported export format: {export_format}")
+                    self.logger.error(f"[ERROR] Unsupported export format: {export_format}")
                 
                 if os.path.exists(output_file):
-                    print(f"[SUCCESS] Export to '{output_file}' complete.")
-
-            self._log_execution_time('export', start_time)
+                    self.logger.info(f"[SUCCESS] Export to '{output_file}' complete.")
+            
             return df
             
         except Exception as e:
-            print(f"[ERROR] Export failed: {e}")
+            self.logger.error(f"action=export | collection={self.collection_name} | error={e}")
             self._log_execution_time('export', start_time)
             return pd.DataFrame()
 
-
 def main():
+    logger = logging.getLogger()
+
     parser = argparse.ArgumentParser(
-        description="A user-friendly command-line toolkit for Typesense.",
+        description="Typesense CLI: action first then options. Examples:\n  search --collection transaction --query *\n  export --collection transaction --format csv\n  get --collection transaction --id 123",
         formatter_class=argparse.RawTextHelpFormatter
     )
 
-    # Argument definitions
-    base_group = parser.add_argument_group('BASE ARGUMENTS')
-    base_group.add_argument("--collection", required=True, help="Target Typesense collection user_id.")
-    subparsers = parser.add_subparsers(dest="action", required=True, help="The action to perform.")
-    search_parser = subparsers.add_parser("search", help="Perform a search query.")
-    search_parser.add_argument("--query", default="*", help="The search query string. (Default: '*')")
-    search_parser.add_argument("--query_by", default="*", help="Comma-separated fields to search in according to rank. (Default: '*')")
-    search_parser.add_argument("--filter_by", help="Filter condition (e.g., 'amount:>100').")
-    search_parser.add_argument("--sort_by", help="Sorting parameters (e.g., 'amount:desc').")
-    search_parser.add_argument("--group_by", help="Field to group results by.")
-    search_parser.add_argument("--facet_by", help="Field to generate facet counts for.")
-    search_parser.add_argument("--include_fields", help="Comma-separated fields to return.")
-    search_parser.add_argument("--limit", type=int, help="Max results to fetch. Enables auto-pagination.")
-    search_parser.add_argument("--page", type=int, help="Fetch a specific page number. Disables auto-pagination.")
-    search_parser.add_argument("--max_facet_values", type=int, default=50)
-    get_parser = subparsers.add_parser("get", help="Fetch a single document by its unique ID.")
-    get_parser.add_argument("id", help="The exact ID of the document to retrieve.")
-    export_parser = subparsers.add_parser("export", help="Export data from a collection.")
-    export_parser.add_argument("--filter_by", help="Filter condition (e.g., 'amount:>100').")
-    export_parser.add_argument("--include_fields", help="Comma-separated fields to include in export.")
-    export_parser.add_argument("--exclude_fields", help="Comma-separated fields to exclude from export.")
-    export_parser.add_argument("--format", choices=["csv", "json", "jsonl", "excel", "parquet"], help="If specified, saves the export to a file of this format.")
-    export_parser.add_argument("--output", help="Output filename. (Default: auto-generated)")
+    # Positional action
+    parser.add_argument("action", choices=["search", "export", "get"], help="Action to perform")
+
+    # Common / later options
+    parser.add_argument("--collection", required=True, help="Target Typesense collection name")
+    parser.add_argument("--logger-name", help="Existing logger name to attach Typesense logs to")
+
+    # Search options
+    parser.add_argument("--query", default="*", help="Search query string (search)")
+    parser.add_argument("--query_by", default="*", help="Fields to search (search)")
+    parser.add_argument("--filter_by", help="Filter condition")
+    parser.add_argument("--sort_by", help="Sort specification")
+    parser.add_argument("--group_by", help="Group results by field (search)")
+    parser.add_argument("--facet_by", help="Facet field (search)")
+    parser.add_argument("--include_fields", help="Comma-separated fields to return / export")
+    parser.add_argument("--limit", type=int, help="Max results to fetch (search)")
+    parser.add_argument("--page", type=int, help="Specific page number (search)")
+    parser.add_argument("--max_facet_values", type=int, default=50, help="Max facet values (search)")
+
+    # Get options
+    parser.add_argument("--id", help="Document ID (get)")
+
+    # Export options
+    parser.add_argument("--exclude_fields", help="Exclude fields (export)")
+    parser.add_argument("--format", choices=["csv", "json", "jsonl", "excel", "parquet"], help="Export file format (export)")
+    parser.add_argument("--output", help="Output filename (export)")
+
     args = parser.parse_args()
 
+    # Attach to provided logger if any
+    if args.logger_name:
+        logger = logging.getLogger(args.logger_name)
+    logger.info("Typesense CLI Start")
+
     try:
-        analyzer = TypesenseClient(collection_name=args.collection)
+        analyzer = TypesenseClient(collection_name=args.collection, logger=logger)
     except ValueError as e:
-        print(f"Configuration Error: {e}")
+        logger.error(f"Configuration Error: {e}")
         return
     
     if not analyzer.client:
@@ -240,28 +253,38 @@ def main():
 
     if args.action == "search":
         if args.group_by and args.facet_by:
-            print("[ERROR] Cannot use both --group_by and --facet_by. Choose one.")
+            logger.error("Cannot use both --group_by and --facet_by together")
             return
-        
         result_df = analyzer.search(
-            query=args.query, query_by=args.query_by, include_fields=args.include_fields,
-            filter_by=args.filter_by, sort_by=args.sort_by, group_by=args.group_by,
-            facet_by=args.facet_by, limit=args.limit, page=args.page, max_facet_values=args.max_facet_values
+            query=args.query,
+            query_by=args.query_by,
+            include_fields=args.include_fields,
+            filter_by=args.filter_by,
+            sort_by=args.sort_by,
+            group_by=args.group_by,
+            facet_by=args.facet_by,
+            limit=args.limit,
+            page=args.page,
+            max_facet_values=args.max_facet_values
         )
-            
     elif args.action == "get":
+        if not args.id:
+            logger.error("--id is required for get action")
+            return
         result_df = analyzer.get_by_id(args.id)
-
     elif args.action == "export":
         result_df = analyzer.export(
-            filter_by=args.filter_by, include_fields=args.include_fields, exclude_fields=args.exclude_fields,
-            export_format=args.format, output_file=args.output
+            filter_by=args.filter_by,
+            include_fields=args.include_fields,
+            exclude_fields=args.exclude_fields,
+            export_format=args.format,
+            output_file=args.output
         )
 
     if not result_df.empty:
         print(result_df)
     else:
-        print("No results found or an error occurred.")
+        logger.info(f"[{args.action}] no_results")
 
 if __name__ == "__main__":
     main()
