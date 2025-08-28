@@ -17,6 +17,9 @@ class TypesenseClient:
         port = os.getenv("TYPESENSE_PORT")
         protocol = "http"
         self.logger = logger or logging.getLogger()
+        # Runtime metrics
+        self._last_duration = None  # seconds of last operation
+        self._last_found = None     # total 'found' from last search
 
         if not api_key:
             raise ValueError("TYPESENSE_API_KEY not found in environment variables or .env file.")
@@ -28,10 +31,21 @@ class TypesenseClient:
                 "connection_timeout_seconds": 300
             })
             self.collection = self.client.collections[self.collection_name]
+            collection_info = self.collection.retrieve()
+            self.default_sorting_field = collection_info.get("default_sorting_field")
+            # Find the first indexed string field to use as a safe default for query_by
+            self.first_string_field = None
+            for field in collection_info.get("fields", []):
+                if field.get("type") == "string" and field.get("index", False):
+                    self.first_string_field = field.get("name")
+                    break
         except Exception as e:
             self.logger.error(f"typesense init_error collection={self.collection_name} error={e}")
             self.client = None
             self.collection = None
+            self.default_sorting_field = None
+            self.first_string_field = None
+            self._last_found = None
 
     def _log_execution_time(self, operation, start_time):
         """Log execution time for an operation."""
@@ -57,13 +71,28 @@ class TypesenseClient:
         per_page=250,
         page=None,
         limit=None,
-        max_facet_values=50
+        max_facet_values=50,
+        return_found: bool = False
     ):
         start_time = time.time()
+        self._last_found = None  # reset for this invocation
         if not self.collection:
-            return pd.DataFrame()
+            return (pd.DataFrame(), None) if return_found else pd.DataFrame()
 
         auto_paginate = page is None
+        if query == "*" and filter_by:
+            if query_by == "*" and self.first_string_field:
+                query_by = self.first_string_field
+                self.logger.info(
+                    "optimizing query: changing query_by to safe string field '%s' for match-all filter.",
+                    query_by
+                )
+            if not sort_by and self.default_sorting_field:
+                sort_by = f"{self.default_sorting_field}:asc"
+                self.logger.info(
+                    "optimizing query: setting sort_by to '%s' to disable relevancy ranking.",
+                    sort_by
+                )
 
         search_parameters = {
             "q": query,
@@ -84,15 +113,18 @@ class TypesenseClient:
             search_parameters["max_facet_values"] = max_facet_values
             search_parameters["per_page"] = 0
 
-        all_hits = []
+        collected = []
         current_page = page or 1
+        results = None
 
         while True:
             params_json = json.dumps(search_parameters, sort_keys=True)
             results = self._cached_search(params_json)
-
             if not results:
                 break
+
+            if self._last_found is None:
+                self._last_found = results.get("found")
                 
             is_grouped = "grouped_hits" in results
             if is_grouped:
@@ -100,20 +132,20 @@ class TypesenseClient:
                 for group in hits:
                     group['documents'] = [doc['document'] for doc in group['hits']]
                     del group['hits']
-                all_hits.extend(hits)
+                collected.extend(hits)
             else:
                 hits = [hit.get("document", hit) for hit in results.get("hits", [])]
-                all_hits.extend(hits)
+                collected.extend(hits)
             
-            if not auto_paginate or (limit and len(all_hits) >= limit) or (len(hits) < per_page):
+            if not auto_paginate or (limit and len(collected) >= limit) or (len(hits) < per_page):
                 if limit:
-                    all_hits = all_hits[:limit]
+                    collected = collected[:limit]
                 break
             
             current_page += 1
             search_parameters["page"] = current_page
 
-        result_df = pd.DataFrame(all_hits)
+        result_df = pd.DataFrame(collected)
         if facet_by and "facet_counts" in results:
             facet_data = []
             for count_data in results["facet_counts"]:
@@ -122,10 +154,27 @@ class TypesenseClient:
         
         self._log_execution_time('search', start_time)
         self.logger.info(
-            "action=search | collection=%s | query=\"%s\" | query_by=\"%s\" | filter_by=\"%s\" | sort_by=\"%s\" | group_by=\"%s\" | facet_by=\"%s\" | page=%s | per_page=%s | rows=%s",
-            self.collection_name, query, query_by, filter_by or '', sort_by or '', group_by or '', facet_by or '', page or 'all', per_page, len(result_df)
+            "action=search | collection=%s | query=\"%s\" | query_by=\"%s\" | filter_by=\"%s\" | sort_by=\"%s\" | group_by=\"%s\" | facet_by=\"%s\" | page=%s | per_page=%s | rows=%s | found=%s",
+            self.collection_name,
+            query,
+            query_by,
+            filter_by or "",
+            sort_by or "",
+            group_by or "",
+            facet_by or "",
+            page or ("all" if auto_paginate else 1),
+            per_page,
+            len(result_df),
+            self._last_found if self._last_found is not None else ""
         )
+        if return_found:
+            return result_df, self._last_found
         return result_df
+
+    # ----- Convenience accessors -----
+    def last_found(self) -> int | None:
+        """Return the 'found' count from the most recent search (or None)."""
+        return self._last_found
 
     def get_by_id(self, document_id):
         start_time = time.time()
@@ -220,6 +269,7 @@ def main():
     parser.add_argument("--limit", type=int, help="Max results to fetch (search)")
     parser.add_argument("--page", type=int, help="Specific page number (search)")
     parser.add_argument("--max_facet_values", type=int, default=50, help="Max facet values (search)")
+    parser.add_argument("--per_page", type=int, default=250, help="Results per page (search)")
 
     # Get options
     parser.add_argument("--id", help="Document ID (get)")
@@ -265,7 +315,8 @@ def main():
             facet_by=args.facet_by,
             limit=args.limit,
             page=args.page,
-            max_facet_values=args.max_facet_values
+            max_facet_values=args.max_facet_values,
+            per_page=args.per_page
         )
     elif args.action == "get":
         if not args.id:
