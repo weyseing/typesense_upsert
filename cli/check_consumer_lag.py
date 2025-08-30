@@ -16,10 +16,10 @@ URL = "https://api.telemetry.confluent.cloud/v2/metrics/cloud/query"
 KAFKA_CLUSTER = os.environ['KAFKA_CLUSTER']
 
 # timeframe, topic, consumer
-TIME_FRAME = "2025-08-25T13:00:00Z/now"     # "2025-08-20T16:00:00Z/2025-08-21T08:00:00Z"    OR     "PT3H/now"
+TIME_FRAME = "2025-08-28T16:00:00Z/now"     # "2025-08-20T16:00:00Z/2025-08-21T08:00:00Z"    OR     "PT3H/now"
 GRANULARITY = "PT1H"
 TOPIC = "typesense_txn_stream_parsed_txn"
-CONSUMER_GROUP_ID = "connect-sink_http.typesense_txn_stream_parsed_txn_20250825-183226"
+CONSUMER_GROUP_ID = "connect-sink_http.typesense_txn_stream_parsed_txn_20250829-014031"
 
 def format_thousands(df, columns):
     for col in columns:
